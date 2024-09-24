@@ -165,7 +165,6 @@ FILE* popen_cmd(Cmd *cmd) {
     if (cmd->args->size == 0) {
         return NULL; // No command to execute
     }
-    printf("-%s\n", display_cmd(cmd));
     FILE *fp = popen(display_cmd(cmd), "r");
     if (fp == NULL) {
         return NULL;
