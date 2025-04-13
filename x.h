@@ -312,6 +312,7 @@ Target* new_target(char* name, BuildType type, char* output_dir) {
     }
     target->name = name;
     target->type = type;
+    target->c_compiler = "gcc";
     target->c_flags = new_string_list();
     target->c_sources = new_string_list();
     target->obj_files = new_string_list();
