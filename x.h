@@ -300,6 +300,7 @@ typedef struct {
     StringList *c_libs;
     StringList *c_sources;
     StringList *obj_files;
+    int auto_build;
     CmdList *cmds;
 
 } Target;
@@ -378,6 +379,10 @@ void add_target_source(Target* target, char* source) {
 
 void add_target_lib(Target* target, char* lib) {
     append_string(target->c_libs, lib);
+}
+
+void auto_build_target(Target* target) {
+    target->auto_build = 1;
 }
 
 void add_target_source_pattern(Target* target, char* pattern) {
@@ -624,7 +629,7 @@ void target_cli(TargetCli *cli, int argc, char** argv) {
 
         for (int j = 0; j < cli->size; j++) {
             if (strcmp(argv[i], cli->target[j]->name) == 0) {
-                if (is_auto) {
+                if (is_auto || cli->target[j]->auto_build) {
                     auto_target_build(cli->target[j]);
                 } else {
                     build_objects_for(cli->target[j]);
