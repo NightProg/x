@@ -119,7 +119,7 @@ void string_builder_free(StringBuilder* builder) {
 typedef struct {
     int size;
     int capacity;
-    char **strings;
+    const char **strings;
 } StringList;
 
 char *ltrim(char *s)
@@ -163,10 +163,10 @@ int remove_string(StringList *list, int index) {
     return 0;
 }
 
-void append_string(StringList *list, char *string) {
+void append_string(StringList *list, const char *string) {
     if (list->size == list->capacity) {
         list->capacity *= 2;
-        char** new_strings = malloc(sizeof(char*) * list->capacity);
+        const char** new_strings = malloc(sizeof(char*) * list->capacity);
         if (new_strings == NULL) {
             return;
         }
@@ -186,7 +186,7 @@ StringList *string_list_from_array(int length, char **array) {
     return list;
 }
 
-int find_string(StringList *list, char *string) {
+int find_string(StringList *list, const char *string) {
     for (int i = 0; i < list->size; i++) {
         if (strcmp(list->strings[i], string) == 0) {
             return i;
@@ -206,7 +206,7 @@ typedef struct {
 } Cmd;
 
 Cmd *new_cmd();
-void append_arg(Cmd *cmd, char *command);
+void append_arg(Cmd *cmd, const char *command);
 void append_args(Cmd *cmd, StringList *commands);
 int execute_cmd(Cmd *cmd);
 char* display_cmd(Cmd *cmd);
@@ -224,20 +224,20 @@ Cmd *new_cmd() {
     return cmd;
 }
 
-Cmd* new_from_args(char* first, ...) {
+Cmd* new_from_args(const char* first, ...) {
     va_list args;
     va_start(args, first);
     Cmd *cmd = new_cmd();
-    char *arg = first;
+    const char *arg = first;
     while (arg != NULL) {
         append_arg(cmd, arg);
-        arg = va_arg(args, char*);
+        arg = va_arg(args, const char*);
     }
     va_end(args);
     return cmd;
 }
 
-void append_arg(Cmd *cmd, char *command) {
+void append_arg(Cmd *cmd, const char *command) {
     append_string(cmd->args, command);
 }
 
@@ -337,7 +337,7 @@ typedef struct {
     StringList *matched;
 } PatternFile;
 
-PatternFile *match_file(char *pattern) {
+PatternFile *match_file(const char *pattern) {
     PatternFile *file = malloc(sizeof(PatternFile));
     if (file == NULL) {
         return NULL;
@@ -372,7 +372,7 @@ int mkdir_if_not_exist(const char *path) {
 }
 
 
-long get_time(char* file) {
+long get_time(const char* file) {
     struct stat attr;
     if (stat(file, &attr) == -1) {
         return -1;
@@ -388,13 +388,19 @@ typedef enum {
     OTHER
 } BuildType;
 
+typedef enum {
+    LANG_C,
+    LANG_CPP
+} Lang;
+
 typedef struct {
-    char* name;
+    const char* name;
     BuildType type;
-    char* c_compiler;
-    char* output_dir;
-    char* output_file;
-    char* description;
+    Lang lang;
+    const char* c_compiler;
+    const char* output_dir;
+    const char* output_file;
+    const char* description;
     const char* clangd_root;
     StringList *output_files;
     StringList *c_flags;
@@ -405,12 +411,13 @@ typedef struct {
 
 } Target;
 
-Target* new_target(char* name, BuildType type, char* output_dir) {
+Target* new_target(const char* name, BuildType type, const char* output_dir) {
     Target* target = malloc(sizeof(Target));
     if (target == NULL) {
         return NULL;
     }
     target->name = name;
+    target->lang = LANG_C;
     target->type = type;
     target->c_compiler = "gcc";
     target->c_flags = new_string_list();
@@ -474,7 +481,7 @@ void add_target_flag(Target* target, char* flag) {
     append_string(target->c_flags, flag);
 }
 
-void add_target_source(Target* target, char* source) {
+void add_target_source(Target* target, const char* source) {
     append_string(target->c_sources, source);
 }
 
@@ -482,7 +489,7 @@ void add_target_lib(Target* target, char* lib) {
     append_string(target->c_libs, lib);
 }
 
-void add_target_source_pattern(Target* target, char* pattern) {
+void add_target_source_pattern(Target* target, const char* pattern) {
     PatternFile *file = match_file(pattern);
     for (int i = 0; i < file->matched->size; i++) {
         add_target_source(target, file->matched->strings[i]);
@@ -496,8 +503,11 @@ void remove_target_source(Target* target, char* source) {
     }
 }
 
-void add_target_cmd(Target* target, Cmd* cmd) {
-    append_cmd(target->cmds, cmd);
+void add_target_cmd(Target *target, Cmd *cmd) { append_cmd(target->cmds, cmd); }
+
+
+void target_cpp(Target *target) {
+    target->lang = LANG_CPP;
 }
 
 void generate_clangd_conf(Target* target, const char* base_path) {
@@ -566,6 +576,12 @@ static int __private_generate_clangd_conf(Target* target, const char* base_path)
         string_builder_append(builder, target->c_flags->strings[i]);
         string_builder_append(builder, "\"");
     }
+    
+    if (target->lang == LANG_C) {
+        string_builder_append(builder, ", -xc");
+    } else if (target->lang == LANG_CPP) {
+        string_builder_append(builder, ", -xc++");
+    }
 
     string_builder_append_char(builder, ']');
     
@@ -597,7 +613,7 @@ char* recursive_mkpath(char* path) {
     return path;
 }
 
-void build_object_for(Target* target, char* source) {
+void build_object_for(Target* target, const char* source) {
     char* output = malloc(strlen(target->output_dir) + strlen(target->name) + strlen(source) + 3);
     if (output == NULL) {
         return;
@@ -664,7 +680,7 @@ void build_target(Target* target) {
 }
 
 
-void auto_target_build_for(Target* target, char* file) {
+void auto_target_build_for(Target* target, const char* file) {
     int index = find_string(target->c_sources, file);
     if (index == -1) {
         return;
