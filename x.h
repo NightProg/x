@@ -1,4 +1,4 @@
-#ifndef XBUILD_XBUILD_H
+#ifdef XBUILD_XBUILD_H
 #define XBUILD_XBUILD_H
 #include <stdlib.h>
 #include <pthread.h>
@@ -462,6 +462,8 @@ Target* new_target(const char* name, BuildType type, const char* output_dir) {
     }
     target->output_file = output;
 
+
+
     return target;
 }
 
@@ -567,21 +569,20 @@ static int __private_generate_clangd_conf(Target* target, const char* base_path)
 
     string_builder_append(builder, "CompileFlags:\n");
     string_builder_append(builder, "\tAdd: [");
-
+    if (target->lang == LANG_C) {
+        string_builder_append(builder, "-xc");
+    } else if (target->lang == LANG_CPP) {
+        string_builder_append(builder, "-xc++");
+    }
     for (int i = 0; i < target->c_flags->size; i++) {
-        if (i != 0) {
-            string_builder_append(builder, ", ");
-        }
+
+        string_builder_append(builder, ", ");
         string_builder_append(builder, "\"");
         string_builder_append(builder, target->c_flags->strings[i]);
         string_builder_append(builder, "\"");
     }
     
-    if (target->lang == LANG_C) {
-        string_builder_append(builder, ", -xc");
-    } else if (target->lang == LANG_CPP) {
-        string_builder_append(builder, ", -xc++");
-    }
+
 
     string_builder_append_char(builder, ']');
     
