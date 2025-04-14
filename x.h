@@ -1,4 +1,4 @@
-#ifdef XBUILD_XBUILD_H
+#ifndef XBUILD_XBUILD_H
 #define XBUILD_XBUILD_H
 #include <stdlib.h>
 #include <pthread.h>
