@@ -1,5 +1,7 @@
 #ifndef XBUILD_XBUILD_H
 #define XBUILD_XBUILD_H
+#include <alloca.h>
+#include <linux/limits.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -11,6 +13,20 @@
 
 #define FILE_ALREADY_EXIST -2
 #define FILE_NOT_FOUND -1
+
+#define ABS(path) absolute_path(path)
+#ifdef XGC
+#define ALLOC(size) gc_alloc(size)
+#define FREE(size)
+#define INIT() gc_init()
+#define DESTROY() gc_destroy()
+#else
+#define ALLOC(size) malloc(size)
+#define FREE(size) free(size)
+#define INIT() 
+#define DESTROY()
+#endif
+
 
 #define RUN_CMD(args...) do { \
     char *cmd[] = { args, NULL }; \
@@ -37,8 +53,7 @@ void log_info(const char* file, int line, const char* func, const char* msg,  ..
     
 }
 
-void log_warn(const char* file, int line, const char* func, const char* msg,  ...) {
-    
+void log_warn(const char* file, int line, const char* func, const char* msg,  ...) {    
     printf("%s (line %d) %s [WARN] ", file, line, func);
     va_list args;
     va_start(args, msg);
@@ -55,8 +70,51 @@ void log_error(const char* file, int line, const char* func, const char* msg,  .
     vprintf(msg, args);
     printf("\n");
     va_end(args);
-    
 }
+
+    
+typedef struct {
+    void** ptrs;
+    size_t len;
+    size_t capacity;
+    size_t total_len;
+} GC;
+
+static GC gc = {0};
+
+void gc_init() {
+    gc.ptrs = malloc(sizeof(void*) * 10);
+    gc.capacity = 10;
+    gc.len = 0;
+}
+
+void* gc_alloc(size_t len) {
+    void* ptr = malloc(len);
+
+    if (ptr == NULL) return NULL;
+    if (gc.len >= gc.capacity) {
+        gc.capacity *= 2;
+        gc.ptrs = realloc(gc.ptrs, gc.capacity);
+        if (gc.ptrs == NULL) {
+            return NULL;
+        }
+    }
+
+    gc.ptrs[gc.len++] = ptr;
+    gc.total_len += len;
+    return ptr;
+}
+
+void gc_destroy() {
+    INFO("The GC allocated %d bytes", gc.total_len);
+    for (int i = 0; i < gc.len; i++) {
+        free(gc.ptrs[i]);
+    }
+    free(gc.ptrs);
+
+    gc.total_len = 0;
+}
+
 
 typedef struct {
     char *string;
@@ -65,7 +123,7 @@ typedef struct {
 } StringBuilder;
 
 StringBuilder *string_builder_new() {
-    StringBuilder *builder = malloc(sizeof(StringBuilder));
+    StringBuilder *builder = ALLOC(sizeof(StringBuilder));
     if (builder == NULL) return NULL;
 
     builder->length = 0;
@@ -78,12 +136,12 @@ StringBuilder *string_builder_new() {
 int string_builder_append_char(StringBuilder* builder, char c) {
     if (builder->length >= builder->capacity) {
         builder->capacity *= 2;
-        char* new_string = malloc(builder->capacity);
+        char* new_string = ALLOC(builder->capacity);
         if (new_string == NULL) {
             return 1;
         }
         memcpy(new_string, builder->string, builder->length);
-        free(builder->string);
+        FREE(builder->string);
         builder->string = new_string;
     }
 
@@ -103,7 +161,7 @@ int string_builder_append(StringBuilder* builder, const char* s) {
 }
 
 char* string_builder_as_c_str(StringBuilder *builder) {
-    char* c_str = malloc(builder->length + 1);
+    char* c_str = ALLOC(builder->length + 1);
     memcpy(c_str, builder->string, builder->length);
     c_str[builder->length] = '\0';
     return c_str;
@@ -111,7 +169,7 @@ char* string_builder_as_c_str(StringBuilder *builder) {
 
 
 void string_builder_free(StringBuilder* builder) {
-    free(builder);
+    FREE(builder);
 }
 
         
@@ -137,13 +195,13 @@ char *rtrim(char *s)
 }
 
 StringList *new_string_list() {
-    StringList *list = malloc(sizeof(StringList));
+    StringList *list = ALLOC(sizeof(StringList));
     if (list == NULL) {
         return NULL;
     }
     list->size = 0;
     list->capacity = 8;
-    list->strings = malloc(sizeof(char*) * list->capacity);
+    list->strings = ALLOC(sizeof(char*) * list->capacity);
     if (list->strings == NULL) {
         free(list);
         printf("Failed to allocate memory\n");
@@ -166,7 +224,7 @@ int remove_string(StringList *list, int index) {
 void append_string(StringList *list, const char *string) {
     if (list->size == list->capacity) {
         list->capacity *= 2;
-        const char** new_strings = malloc(sizeof(char*) * list->capacity);
+        const char** new_strings = ALLOC(sizeof(char*) * list->capacity);
         if (new_strings == NULL) {
             return;
         }
@@ -196,8 +254,8 @@ int find_string(StringList *list, const char *string) {
 }
 
 void free_string_list(StringList *list) {
-    free(list->strings);
-    free(list);
+    FREE(list->strings);
+    FREE(list);
 }
 
 
@@ -216,7 +274,7 @@ void free_cmd(Cmd *cmd) {
 };
 
 Cmd *new_cmd() {
-    Cmd *cmd = malloc(sizeof(Cmd));
+    Cmd *cmd = ALLOC(sizeof(Cmd));
     if (cmd == NULL) {
         return NULL;
     }
@@ -273,7 +331,7 @@ char* display_cmd(Cmd *cmd) {
     for (int i = 0; i < cmd->args->size; i++) {
         length += strlen(cmd->args->strings[i]) + 1; // +1 for space
     }
-    char *result = malloc(length + 1);
+    char *result = ALLOC(length + 1);
     if (result == NULL) {
         return NULL;
     }
@@ -295,13 +353,13 @@ typedef struct {
 } CmdList;
 
 CmdList *new_cmd_list() {
-    CmdList *list = malloc(sizeof(CmdList));
+    CmdList *list = ALLOC(sizeof(CmdList));
     if (list == NULL) {
         return NULL;
     }
     list->size = 0;
     list->capacity = 8;
-    list->cmds = malloc(sizeof(Cmd*) * list->capacity);
+    list->cmds = ALLOC(sizeof(Cmd*) * list->capacity);
     if (list->cmds == NULL) {
         free(list);
         return NULL;
@@ -312,12 +370,12 @@ CmdList *new_cmd_list() {
 void append_cmd(CmdList *list, Cmd *cmd) {
     if (list->size == list->capacity) {
         list->capacity *= 2;
-        Cmd **new_cmds = malloc(sizeof(Cmd*) * list->capacity);
+        Cmd **new_cmds = ALLOC(sizeof(Cmd*) * list->capacity);
         if (new_cmds == NULL) {
             return;
         }
         memcpy(new_cmds, list->cmds, sizeof(Cmd*) * list->size);
-        free(list->cmds);
+        FREE(list->cmds);
         list->cmds = new_cmds;
     }
     list->cmds[list->size++] = cmd;
@@ -327,8 +385,18 @@ void free_cmd_list(CmdList *list) {
     for (int i = 0; i < list->size; i++) {
         free_cmd(list->cmds[i]);
     }
-    free(list->cmds);
-    free(list);
+    FREE(list->cmds);
+    FREE(list);
+}
+
+
+char* absolute_path(const char* rel_path) {
+    char* path = ALLOC(PATH_MAX); 
+    if(realpath(rel_path, path) != NULL) {
+        return path;
+    }
+
+    return NULL;
 }
 
 
@@ -338,7 +406,7 @@ typedef struct {
 } PatternFile;
 
 PatternFile *match_file(const char *pattern) {
-    PatternFile *file = malloc(sizeof(PatternFile));
+    PatternFile *file = ALLOC(sizeof(PatternFile));
     if (file == NULL) {
         return NULL;
     }
@@ -349,12 +417,12 @@ PatternFile *match_file(const char *pattern) {
         return NULL;
     }
 
-    char* buffer = malloc(1024);
+    char* buffer = ALLOC(1024);
     while (fgets(buffer, 1024, fp) != NULL) {
         rtrim(buffer);
         append_string(file->matched, strdup(buffer));
     }
-    free(buffer);
+    FREE(buffer);
 
     return file;
 }
@@ -412,7 +480,7 @@ typedef struct {
 } Target;
 
 Target* new_target(const char* name, BuildType type, const char* output_dir) {
-    Target* target = malloc(sizeof(Target));
+    Target* target = ALLOC(sizeof(Target));
     if (target == NULL) {
         return NULL;
     }
@@ -433,7 +501,7 @@ Target* new_target(const char* name, BuildType type, const char* output_dir) {
         target->output_dir = output_dir;
     }
     mkdir_if_not_exist(target->output_dir);
-    char* target_dir = malloc(strlen(target->output_dir) + strlen(target->name) + 2);
+    char* target_dir = ALLOC(strlen(target->output_dir) + strlen(target->name) + 2);
     if (target_dir == NULL) {
         return NULL;
     }
@@ -442,19 +510,19 @@ Target* new_target(const char* name, BuildType type, const char* output_dir) {
 
     char* output;
     if (target->type == EXECUTABLE) {
-        output = malloc(strlen(target->output_dir) + strlen(target->name) + 3);
+        output = ALLOC(strlen(target->output_dir) + strlen(target->name) + 3);
         if (output == NULL) {
             return NULL;
         }
         sprintf(output, "%s/%s/%s", target->output_dir, target->name, target->name);
     } else if (target->type == STATIC) {
-        output = malloc(strlen(target->output_dir) + strlen(target->name) * 2 + 10);
+        output = ALLOC(strlen(target->output_dir) + strlen(target->name) * 2 + 10);
         if (output == NULL) {
             return NULL;
         }
         sprintf(output, "%s/%s/lib%s.a", target->output_dir, target->name, target->name);
     } else if (target->type == SHARED) {
-        output = malloc(strlen(target->output_dir) + strlen(target->name) * 2 + 10);
+        output = ALLOC(strlen(target->output_dir) + strlen(target->name) * 2 + 10);
         if (output == NULL) {
             return NULL;
         }
@@ -522,16 +590,16 @@ void generate_clangd_conf(Target* target, const char* base_path) {
 
 void target_link_target(Target* target, Target* link) {
     if (link->type == EXECUTABLE) {
-        printf("Cannot link an executable\n");
+        ERROR("Cannot link a executable");
         return;
     }
-    char* flag = malloc(strlen(link->name) + 3);
+    char* flag = ALLOC(strlen(link->name) + 3);
     if (flag == NULL) {
         return;
     }
     sprintf(flag, "-l%s", link->name);
     add_target_lib(target, flag);
-    char *path = malloc(strlen(link->output_dir) + strlen(link->name) + 3);
+    char *path = ALLOC(strlen(link->output_dir) + strlen(link->name) + 3);
     if (path == NULL) {
         return;
     }
@@ -557,11 +625,11 @@ static int __private_generate_clangd_conf(Target* target, const char* base_path)
         return FILE_NOT_FOUND;
     }
     
-    char* path = malloc(strlen(base_path) + strlen(".clangd") + 1); // +1 for `/` character
+    char* path = ALLOC(strlen(base_path) + strlen(".clangd") + 1); // +1 for `/` character
     snprintf(path, 1000, "%s/.clangd", base_path);
     if (is_exist(path) != -1) {
-        ERROR(".clangd already exist: %s, doing nothing", path);
-        free(path);
+        WARN(".clangd already exist: %s, doing nothing", path);
+        FREE(path);
         return FILE_ALREADY_EXIST;
     }
             
@@ -570,7 +638,8 @@ static int __private_generate_clangd_conf(Target* target, const char* base_path)
     string_builder_append(builder, "CompileFlags:\n");
     string_builder_append(builder, "\tAdd: [");
     if (target->lang == LANG_C) {
-        string_builder_append(builder, "\"-xc\"");
+        string_builder_append
+(builder, "\"-xc\"");
     } else if (target->lang == LANG_CPP) {
         string_builder_append(builder, "\"-xc++\"");
     }
@@ -596,7 +665,7 @@ static int __private_generate_clangd_conf(Target* target, const char* base_path)
     fwrite(str, strlen(str), 1, file);
     fclose(file);
 
-    free(path);
+    FREE(path);
 
     return 0;
 }
@@ -615,7 +684,7 @@ char* recursive_mkpath(char* path) {
 }
 
 void build_object_for(Target* target, const char* source) {
-    char* output = malloc(strlen(target->output_dir) + strlen(target->name) + strlen(source) + 3);
+    char* output = ALLOC(strlen(target->output_dir) + strlen(target->name) + strlen(source) + 3);
     if (output == NULL) {
         return;
     }
@@ -684,9 +753,10 @@ void build_target(Target* target) {
 void auto_target_build_for(Target* target, const char* file) {
     int index = find_string(target->c_sources, file);
     if (index == -1) {
+        ERROR("the file `%s` was not found", file);
         return;
     }
-    char* o_files = malloc(strlen(target->output_dir) + strlen(target->name) + strlen(file) + 3);
+    char* o_files = ALLOC(strlen(target->output_dir) + strlen(target->name) + strlen(file) + 3);
     if (o_files == NULL) {
         return;
     }
@@ -714,13 +784,13 @@ typedef struct {
 } TargetCli;
 
 TargetCli* new_target_cli() {
-    TargetCli *cli = malloc(sizeof(TargetCli));
+    TargetCli *cli = ALLOC(sizeof(TargetCli));
     if (cli == NULL) {
         return NULL;
     }
     cli->size = 0;
     cli->capacity = 8;
-    cli->target = malloc(sizeof(Target*) * cli->capacity);
+    cli->target = ALLOC(sizeof(Target*) * cli->capacity);
     if (cli->target == NULL) {
         free(cli);
         return NULL;
@@ -731,12 +801,12 @@ TargetCli* new_target_cli() {
 void append_target_cli(TargetCli *cli, Target *target) {
     if (cli->size == cli->capacity) {
         cli->capacity *= 2;
-        Target **new_target = malloc(sizeof(Target*) * cli->capacity);
+        Target **new_target = ALLOC(sizeof(Target*) * cli->capacity);
         if (new_target == NULL) {
             return;
         }
         memcpy(new_target, cli->target, sizeof(Target*) * cli->size);
-        free(cli->target);
+        FREE(cli->target);
         cli->target = new_target;
     }
     cli->target[cli->size++] = target;
@@ -758,7 +828,6 @@ void target_cli_print_usage(TargetCli *cli, int argc, char** argv) {
     printf("\t-a, --all\t\tBuild all targets\n");
     printf("\t-c, --clean\t\tClean all targets\n");
     printf("\t-t, --auto\t\tBuild the targets that need to be built\n");
-    printf("\t-d, --clangd\t\tGenerate a clangd file for the target\n");
 }
 
 void target_cli(TargetCli *cli, int argc, char** argv) {
@@ -789,15 +858,9 @@ void target_cli(TargetCli *cli, int argc, char** argv) {
         return;
     }
     int is_auto = 0;
-    int generate_clangd = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--auto") == 0) {
             is_auto = 1;
-            continue;
-        }
-
-        if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--clangd") == 0) {
-            generate_clangd = 1;
             continue;
         }
 
@@ -825,10 +888,10 @@ void target_cli(TargetCli *cli, int argc, char** argv) {
 
 void free_target_cli(TargetCli *cli) {
     for (int i = 0; i < cli->size; i++) {
-        free(cli->target[i]);
+        FREE(cli->target[i]);
     }
-    free(cli->target);
-    free(cli);
+    FREE(cli->target);
+    FREE(cli);
 }
 
 
