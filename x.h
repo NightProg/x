@@ -570,9 +570,9 @@ static int __private_generate_clangd_conf(Target* target, const char* base_path)
     string_builder_append(builder, "CompileFlags:\n");
     string_builder_append(builder, "\tAdd: [");
     if (target->lang == LANG_C) {
-        string_builder_append(builder, "-xc");
+        string_builder_append(builder, "\"-xc\"");
     } else if (target->lang == LANG_CPP) {
-        string_builder_append(builder, "-xc++");
+        string_builder_append(builder, "\"-xc++\"");
     }
     for (int i = 0; i < target->c_flags->size; i++) {
 
