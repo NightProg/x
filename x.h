@@ -9,6 +9,9 @@
 #include <ctype.h>
 #include <stdarg.h>
 
+#define FILE_ALREADY_EXIST -2
+#define FILE_NOT_FOUND -1
+
 #define RUN_CMD(args...) do { \
     char *cmd[] = { args, NULL }; \
     Cmd *c = new_cmd();   \
@@ -16,9 +19,102 @@
     execute_cmd(c);         \
 } while (0)
 
-#define CMD(args...) \
-    new_from_args(args, NULL)
+#define CMD(args...) new_from_args(args, NULL)
 
+#define INFO(msg, args...) log_info(__FILE__, __LINE__, __func__, msg, args)
+#define WARN(msg, args...) log_warn(__FILE__, __LINE__, __func__, msg, args)
+#define ERROR(msg, args...) log_error( __FILE__, __LINE__, __func__, msg, args)
+
+
+void log_info(const char* file, int line, const char* func, const char* msg,  ...) {
+    
+    printf("%s (line %d) %s [INFO] ", file, line, func);
+    va_list args;
+    va_start(args, msg);
+    vprintf(msg, args);
+    printf("\n");
+    va_end(args);
+    
+}
+
+void log_warn(const char* file, int line, const char* func, const char* msg,  ...) {
+    
+    printf("%s (line %d) %s [WARN] ", file, line, func);
+    va_list args;
+    va_start(args, msg);
+    vprintf(msg, args);
+    printf("\n");
+    va_end(args);
+}
+
+void log_error(const char* file, int line, const char* func, const char* msg,  ...) {
+    
+    printf("%s (line %d) %s [ERROR] ", file, line, func);
+    va_list args;
+    va_start(args, msg);
+    vprintf(msg, args);
+    printf("\n");
+    va_end(args);
+    
+}
+
+typedef struct {
+    char *string;
+    size_t length;
+    size_t capacity;
+} StringBuilder;
+
+StringBuilder *string_builder_new() {
+    StringBuilder *builder = malloc(sizeof(StringBuilder));
+    if (builder == NULL) return NULL;
+
+    builder->length = 0;
+    builder->capacity = 10;
+    builder->string = malloc(builder->capacity);
+
+    return builder;
+}
+
+int string_builder_append_char(StringBuilder* builder, char c) {
+    if (builder->length >= builder->capacity) {
+        builder->capacity *= 2;
+        char* new_string = malloc(builder->capacity);
+        if (new_string == NULL) {
+            return 1;
+        }
+        memcpy(new_string, builder->string, builder->length);
+        free(builder->string);
+        builder->string = new_string;
+    }
+
+    builder->string[builder->length++] = c;
+    return 0;
+}
+
+int string_builder_append(StringBuilder* builder, const char* s) {
+    for (int i = 0; i < strlen(s); i++) {
+        int res = string_builder_append_char(builder, s[i]);
+        if (res != 0) {
+            return res;
+        }
+    }
+
+    return 1;
+}
+
+char* string_builder_as_c_str(StringBuilder *builder) {
+    char* c_str = malloc(builder->length + 1);
+    memcpy(c_str, builder->string, builder->length);
+    c_str[builder->length] = '\0';
+    return c_str;
+}
+
+
+void string_builder_free(StringBuilder* builder) {
+    free(builder);
+}
+
+        
 
 typedef struct {
     int size;
@@ -263,9 +359,13 @@ PatternFile *match_file(char *pattern) {
     return file;
 }
 
-int mkdir_if_not_exist(char *path) {
+int is_exist(const char* path) {
     struct stat st = {0};
-    if (stat(path, &st) == -1) {
+    return stat(path, &st);
+}
+
+int mkdir_if_not_exist(const char *path) {
+    if (is_exist(path) == -1) {
         return mkdir(path, 0700);
     }
     return 0;
@@ -295,12 +395,12 @@ typedef struct {
     char* output_dir;
     char* output_file;
     char* description;
+    const char* clangd_root;
     StringList *output_files;
     StringList *c_flags;
     StringList *c_libs;
     StringList *c_sources;
     StringList *obj_files;
-    int auto_build;
     CmdList *cmds;
 
 } Target;
@@ -382,10 +482,6 @@ void add_target_lib(Target* target, char* lib) {
     append_string(target->c_libs, lib);
 }
 
-void auto_build_target(Target* target) {
-    target->auto_build = 1;
-}
-
 void add_target_source_pattern(Target* target, char* pattern) {
     PatternFile *file = match_file(pattern);
     for (int i = 0; i < file->matched->size; i++) {
@@ -403,6 +499,14 @@ void remove_target_source(Target* target, char* source) {
 void add_target_cmd(Target* target, Cmd* cmd) {
     append_cmd(target->cmds, cmd);
 }
+
+void generate_clangd_conf(Target* target, const char* base_path) {
+    if (is_exist(base_path) == -1) {
+        WARN("the directory `%s` was not found", base_path);
+    }
+    target->clangd_root = base_path;
+}
+
 
 void target_link_target(Target* target, Target* link) {
     if (link->type == EXECUTABLE) {
@@ -433,6 +537,51 @@ void add_target_sources(Target* target, char* first, ...) {
         arg = va_arg(args, char*);
     }
     va_end(args);
+}
+
+static int __private_generate_clangd_conf(Target* target, const char* base_path) {
+    if (is_exist(base_path) == -1) {
+        ERROR("the path `%s` was not found", base_path);
+        return FILE_NOT_FOUND;
+    }
+    
+    char* path = malloc(strlen(base_path) + strlen(".clangd") + 1); // +1 for `/` character
+    snprintf(path, 1000, "%s/.clangd", base_path);
+    if (is_exist(path) != -1) {
+        ERROR(".clangd already exist: %s, doing nothing", path);
+        free(path);
+        return FILE_ALREADY_EXIST;
+    }
+            
+    StringBuilder *builder = string_builder_new();
+
+    string_builder_append(builder, "CompileFlags:\n");
+    string_builder_append(builder, "\tAdd: [");
+
+    for (int i = 0; i < target->c_flags->size; i++) {
+        if (i != 0) {
+            string_builder_append(builder, ", ");
+        }
+        string_builder_append(builder, "\"");
+        string_builder_append(builder, target->c_flags->strings[i]);
+        string_builder_append(builder, "\"");
+    }
+
+    string_builder_append_char(builder, ']');
+    
+        
+    char* str = string_builder_as_c_str(builder);
+    string_builder_free(builder);
+
+
+
+    FILE* file = fopen(path, "w");
+    fwrite(str, strlen(str), 1, file);
+    fclose(file);
+
+    free(path);
+
+    return 0;
 }
 
 char* recursive_mkpath(char* path) {
@@ -592,6 +741,7 @@ void target_cli_print_usage(TargetCli *cli, int argc, char** argv) {
     printf("\t-a, --all\t\tBuild all targets\n");
     printf("\t-c, --clean\t\tClean all targets\n");
     printf("\t-t, --auto\t\tBuild the targets that need to be built\n");
+    printf("\t-d, --clangd\t\tGenerate a clangd file for the target\n");
 }
 
 void target_cli(TargetCli *cli, int argc, char** argv) {
@@ -622,17 +772,26 @@ void target_cli(TargetCli *cli, int argc, char** argv) {
         return;
     }
     int is_auto = 0;
+    int generate_clangd = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--auto") == 0) {
             is_auto = 1;
             continue;
         }
 
+        if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--clangd") == 0) {
+            generate_clangd = 1;
+            continue;
+        }
+
         for (int j = 0; j < cli->size; j++) {
             if (strcmp(argv[i], cli->target[j]->name) == 0) {
-                if (is_auto || cli->target[j]->auto_build) {
+                if (is_auto) {
                     auto_target_build(cli->target[j]);
                 } else {
+                    if (cli->target[j]->clangd_root != NULL) {
+                        __private_generate_clangd_conf(cli->target[j], cli->target[j]->clangd_root);
+                    }
                     build_objects_for(cli->target[j]);
                     build_target(cli->target[j]);
                 }
